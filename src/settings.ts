@@ -74,7 +74,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 
 export const SETTINGS_SCHEMA: PluginSettingsSchema = {
   // 注意：版本号已从 schema 中移除，避免作为 string 字段被用户编辑。
-  // 改为通过 injectVersionBadge() 在设置面板顶部以只读徽章形式展示（纯展示，不可编辑/复制）。
+  // 改为通过 patchPluginNameWithVersion() 在插件名旁边注入版本号胶囊展示。
   debug: {
     label: '调试开关',
     description: '开启后在 console 输出详细日志（导入步骤、光标状态、editor command 调用参数等）',
@@ -273,86 +273,80 @@ export async function registerSettings(pluginName: string): Promise<void> {
   } catch (err) {
     console.warn('[OIE] registerSettings failed:', err);
   }
-  // 注册完成后，向设置面板注入只读版本徽章
+  // 注册完成后，向设置面板插件名旁边注入版本号胶囊
   // 延迟 300ms 给 Orca 渲染设置面板 DOM 的时间
-  setTimeout(() => injectVersionBadge(pluginName), 300);
+  setTimeout(() => patchPluginNameWithVersion(pluginName), 300);
 }
 
 // ============================================================
-// VERSION BADGE — 设置面板顶部只读版本徽章
+// VERSION BADGE — 插件名旁边版本号胶囊（参照 orca-plugin-picgo）
 // 取代将版本号作为可编辑 string 字段放入 schema
 // ============================================================
 
 const VERSION_BADGE_STYLE = `
-.oie-version-badge {
-  --oie-badge-primary: #3370ff;
-  --oie-badge-text: #1a1a1a;
-  --oie-badge-text-2: #4e5969;
-  --oie-badge-version-bg: rgba(51,112,255,0.12);
-
-  margin: 0 0 16px 0;
-  color: var(--oie-badge-text);
-  font-size: 13px;
-  line-height: 1.5;
+.oie-version-pill-host {
+  position: relative !important;
+  display: inline-block !important;
 }
-.oie-version-badge-name {
-  font-weight: 600;
-  margin-right: 6px;
-}
-.oie-version-badge-version {
+.oie-version-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
   font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--oie-badge-version-bg);
-  color: var(--oie-badge-primary);
-  font-weight: 700;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #3370ff;
+  color: #fff;
+  margin-left: 10px;
+  vertical-align: middle;
   user-select: none;
   -webkit-user-select: none;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(51,112,255,0.25);
 }
-.oie-version-badge-desc {
-  font-size: 12px;
-  color: var(--oie-badge-text-2);
-  margin-top: 2px;
-}
-/* Orca 暗色主题 — 通过 body 属性检测，不依赖 prefers-color-scheme */
-body[data-theme="dark"] .oie-version-badge,
-body.dark .oie-version-badge,
-body.theme-dark .oie-version-badge {
-  --oie-badge-primary: #7aaaff;
-  --oie-badge-text: #e8e8e8;
-  --oie-badge-text-2: #9ca3af;
-  --oie-badge-version-bg: rgba(74,140,255,0.18);
+body[data-theme="dark"] .oie-version-pill,
+body.dark .oie-version-pill,
+body.theme-dark .oie-version-pill {
+  background: #5b8ff9;
+  box-shadow: 0 1px 3px rgba(91,143,249,0.25);
 }
 @media (prefers-color-scheme: dark) {
-  .oie-version-badge {
-    --oie-badge-primary: #7aaaff;
-    --oie-badge-text: #e8e8e8;
-    --oie-badge-text-2: #9ca3af;
-    --oie-badge-version-bg: rgba(74,140,255,0.18);
-  }
+  .oie-version-pill { background: #5b8ff9; }
 }
 `;
 
-let versionBadgeInjected = false;
 let versionBadgeObserver: MutationObserver | null = null;
+const OIE_VERSION_PATCHED = 'data-oie-version-patched';
+
+/** 检查元素是否在侧边栏内（向上遍历 6 层祖先） */
+function isInsideSidebar(el: HTMLElement | null): boolean {
+  if (!el) return false;
+  let depth = 0;
+  let node: HTMLElement | null = el;
+  while (node && depth < 6) {
+    const cls = (node.className || '').toString().toLowerCase();
+    if (/sidebar|side-bar|plugin-list|nav-panel|left-panel|nav-list/.test(cls)) return true;
+    node = node.parentElement;
+    depth++;
+  }
+  return false;
+}
 
 /**
- * 向 Orca 设置面板顶部注入只读版本徽章
- * 取代将版本号作为可编辑 string 字段放入 schema
+ * 在设置面板中找到插件名称元素，在其旁边注入版本号胶囊
+ * 三层渐进扫描：精确选择器 → 标题 fallback → 宽元素兜底
+ * 全局最多只注入 1 个 badge
  */
-export function injectVersionBadge(pluginName: string): void {
+export function patchPluginNameWithVersion(pluginName: string): void {
   if (typeof document === 'undefined') return;
 
-  // V-3 修复：每次调用先检查 DOM 是否真实存在徽章，不存在则重置状态
-  if (versionBadgeInjected) {
-    const existing = document.querySelector('.oie-version-badge');
-    if (existing) return; // 确实存在，跳过
-    // DOM 中已不存在（面板重渲染被移除），重置状态允许重新注入
-    versionBadgeInjected = false;
-  }
+  // 全局最多只注入 1 个：通过标记属性判断
+  if (document.querySelector(`[${OIE_VERSION_PATCHED}]`)) return;
 
-  // 注入样式
+  // 注入胶囊样式
   if (!document.getElementById('oie-version-badge-style')) {
     const style = document.createElement('style');
     style.id = 'oie-version-badge-style';
@@ -361,109 +355,113 @@ export function injectVersionBadge(pluginName: string): void {
     document.head.appendChild(style);
   }
 
-  // v2.4.6+：定位到右侧设置内容区（最小包含设置字段的容器），避免注入左侧插件列表
-  const findPanel = (): HTMLElement | null => {
-    const settingsLabels = ['调试开关', '默认导出样式'];
-
-    // 跳过已注入徽章的容器
-    const existing = document.querySelector('.oie-version-badge');
-    if (existing) {
-      versionBadgeInjected = true;
-      return null;
-    }
-
-    // 策略：在所有 div/section/form 中找出包含全部设置字段的最小容器（面积最小）
-    // 最小容器 = 右侧设置内容区；整个模态框面积更大会被淘汰
-    let bestCandidate: HTMLElement | null = null;
-    let bestArea = Infinity;
-
-    const allEls = document.querySelectorAll('div, section, form');
-    for (const el of allEls) {
-      const text = el.textContent || '';
-      // 必须包含全部设置字段标签
-      if (!settingsLabels.every(label => text.includes(label))) continue;
-      // 不能是隐藏元素
-      const rect = (el as HTMLElement).getBoundingClientRect?.();
-      if (!rect || rect.width < 200 || rect.height < 80) continue;
-      // 面积最小的候选者胜出
-      const area = rect.width * rect.height;
-      if (area < bestArea) {
-        bestArea = area;
-        bestCandidate = el as HTMLElement;
-      }
-    }
-
-    return bestCandidate;
-  };
-
-  const tryInject = (): boolean => {
+  const tryPatch = (): boolean => {
     try {
-      const panel = findPanel();
-      if (!panel) {
-        debugLog(pluginName, 'version badge: panel not found yet');
-        return false;
-      }
+      let target: HTMLElement | null = null;
 
-      // 检查是否已注入
-      if (panel.querySelector('.oie-version-badge')) {
-        versionBadgeInjected = true;
-        return true;
-      }
-
-      // 隐藏 Orca 原生插件标题（与我们的徽章重复）
-      // 查找面板内包含插件名的 h1~h3 或首个文本匹配的标题元素
-      const headings = panel.querySelectorAll('h1, h2, h3, h4, h5, h6');
-      for (const h of headings) {
-        const text = h.textContent?.trim() || '';
-        if (text === pluginName || text === 'orca-import-export') {
-          (h as HTMLElement).style.display = 'none';
+      // ===== 第一层：精确选择器（带插件名过滤，避免命中通用类） =====
+      const exactSelectors = [
+        `.plugin-property-name[data-plugin-name="${pluginName}"]`,
+        `.plugin-detail-name[data-plugin-name="${pluginName}"]`,
+        `[data-plugin-name="${pluginName}"]`,
+        `[data-plugin="${pluginName}"]`,
+        `.plugin-name[data-id="${pluginName}"]`,
+        `.settings-plugin-name`,
+      ];
+      for (const sel of exactSelectors) {
+        const el = document.querySelector(sel);
+        if (el && (el as HTMLElement).textContent?.includes(pluginName)) {
+          target = el as HTMLElement;
+          break;
         }
       }
 
-      const badge = document.createElement('div');
-      badge.className = 'oie-version-badge';
-      badge.innerHTML = `
-        <div>
-          <span class="oie-version-badge-name">orca-import-export</span>
-          <span class="oie-version-badge-version">v${PLUGIN_VERSION}</span>
-        </div>
-        <div class="oie-version-badge-desc">让笔记迁移更简单</div>
-      `;
-      panel.insertBefore(badge, panel.firstChild);
-      versionBadgeInjected = true;
-      console.log('[OIE] version badge injected');
+      // ===== 第二层：标题类元素 fallback =====
+      // 优先命中显示插件标题的元素（而不是任何包含插件名的开关 label）
+      if (!target) {
+        const headingSelectors = 'h1, h2, h3, h4, .title, .page-title, .plugin-title, .settings-title, .orca-plugin-title, .setting-header-title';
+        const headings = document.querySelectorAll(headingSelectors);
+        for (const h of headings) {
+          const text = h.textContent?.trim() || '';
+          // 精确匹配插件名，避免 "启用插件" 这类开关 label
+          if (text === pluginName) {
+            target = h as HTMLElement;
+            break;
+          }
+        }
+      }
 
+      // ===== 第三层：宽元素兜底（宽度 ≥ 240px 的文本元素） =====
+      if (!target) {
+        const textEls = document.querySelectorAll('div, span, p, section, article, header');
+        let best: HTMLElement | null = null;
+        let bestW = 0;
+        for (const el of textEls) {
+          const text = el.textContent?.trim() || '';
+          // 文本必须等于插件名，避免命中子元素拼接或开关 label
+          if (text !== pluginName) continue;
+          const rect = (el as HTMLElement).getBoundingClientRect?.();
+          if (!rect || rect.width < 240) continue;
+          // 排除侧边栏
+          if (isInsideSidebar(el as HTMLElement)) continue;
+          if (rect.width > bestW) {
+            bestW = rect.width;
+            best = el as HTMLElement;
+          }
+        }
+        target = best;
+      }
+
+      if (!target || isInsideSidebar(target)) {
+        debugLog(pluginName, 'version pill: target not found or inside sidebar');
+        return false;
+      }
+
+      // 再次检查全局唯一（防止并发）
+      if (document.querySelector(`[${OIE_VERSION_PATCHED}]`)) return true;
+
+      // 标记目标元素已注入
+      target.setAttribute(OIE_VERSION_PATCHED, 'true');
+
+      // 给目标元素增加 host 样式，确保胶囊内联显示
+      target.classList.add('oie-version-pill-host');
+
+      // 插入版本胶囊
+      const pill = document.createElement('span');
+      pill.className = 'oie-version-pill';
+      pill.textContent = `v${PLUGIN_VERSION}`;
+      target.appendChild(pill);
+
+      console.log('[OIE] version pill patched');
       return true;
     } catch (e) {
-      // 面板被其他插件操作时可能抛 DOMException，静默失败让 Observer 继续监听
+      // 静默失败，Observer 继续监听
       return false;
     }
   };
 
-  if (tryInject()) return;
+  if (tryPatch()) return;
 
   // 设置面板可能尚未渲染，使用 MutationObserver 监听
-  // 成功注入后断开；30s 超时保底断开避免长期占用
   if (versionBadgeObserver) {
     versionBadgeObserver.disconnect();
   }
   versionBadgeObserver = new MutationObserver(() => {
-    if (tryInject()) {
+    if (tryPatch()) {
       versionBadgeObserver?.disconnect();
       versionBadgeObserver = null;
     }
   });
   versionBadgeObserver.observe(document.body, { childList: true, subtree: true });
 
-  // 5s 后仍未注入，输出诊断日志帮助排查
+  // 5s 诊断日志
   setTimeout(() => {
-    if (!versionBadgeInjected) {
-      console.warn('[OIE] version badge: not injected after 5s. Available settings panels:',
-        Array.from(document.querySelectorAll('.orca-plugin-settings, .orca-settings-panel, [class*="plugin-settings"], [class*="settings-content"]'))
-          .map(el => ({ className: el.className, text: (el.textContent || '').slice(0, 80) })));
+    if (!document.querySelector(`[${OIE_VERSION_PATCHED}]`)) {
+      console.warn('[OIE] version pill: not patched after 5s');
     }
   }, 5000);
 
+  // 30s 超时断开
   setTimeout(() => {
     if (versionBadgeObserver) {
       versionBadgeObserver.disconnect();
@@ -473,7 +471,7 @@ export function injectVersionBadge(pluginName: string): void {
 }
 
 /**
- * V-5: unload 时清理版本徽章资源
+ * unload 时清理所有版本徽章资源
  * 由 main.ts unload() 调用
  */
 export function removeVersionBadge(): void {
@@ -481,9 +479,17 @@ export function removeVersionBadge(): void {
     versionBadgeObserver.disconnect();
     versionBadgeObserver = null;
   }
-  versionBadgeInjected = false;
+  // 清理标记属性、host 类、胶囊元素
+  document.querySelectorAll(`[${OIE_VERSION_PATCHED}]`).forEach(el => {
+    el.removeAttribute(OIE_VERSION_PATCHED);
+    el.classList.remove('oie-version-pill-host');
+    const pill = el.querySelector('.oie-version-pill');
+    if (pill) pill.remove();
+  });
+  // 兜底：清理所有可能残留的胶囊和 host 类
+  document.querySelectorAll('.oie-version-pill').forEach(el => el.remove());
+  document.querySelectorAll('.oie-version-pill-host').forEach(el => el.classList.remove('oie-version-pill-host'));
   document.getElementById('oie-version-badge-style')?.remove();
-  document.querySelectorAll('.oie-version-badge').forEach(el => el.remove());
 }
 
 // ============================================================

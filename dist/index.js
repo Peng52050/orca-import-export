@@ -2170,7 +2170,7 @@ async function setAllBlocksFolded(collapse) {
     return 0;
   }
 }
-const PLUGIN_VERSION = "2.4.6";
+const PLUGIN_VERSION = "2.4.7";
 const DEFAULT_SETTINGS = {
   debug: false,
   defaultExportStyle: "orca",
@@ -2185,7 +2185,7 @@ const DEFAULT_SETTINGS = {
 };
 const SETTINGS_SCHEMA = {
   // 注意：版本号已从 schema 中移除，避免作为 string 字段被用户编辑。
-  // 改为通过 injectVersionBadge() 在设置面板顶部以只读徽章形式展示（纯展示，不可编辑/复制）。
+  // 改为通过 patchPluginNameWithVersion() 在插件名旁边注入版本号胶囊展示。
   debug: {
     label: "调试开关",
     description: "开启后在 console 输出详细日志（导入步骤、光标状态、editor command 调用参数等）",
@@ -2360,67 +2360,59 @@ async function registerSettings(pluginName2) {
   } catch (err) {
     console.warn("[OIE] registerSettings failed:", err);
   }
-  setTimeout(() => injectVersionBadge(pluginName2), 300);
+  setTimeout(() => patchPluginNameWithVersion(pluginName2), 300);
 }
 const VERSION_BADGE_STYLE = `
-.oie-version-badge {
-  --oie-badge-primary: #3370ff;
-  --oie-badge-text: #1a1a1a;
-  --oie-badge-text-2: #4e5969;
-  --oie-badge-version-bg: rgba(51,112,255,0.12);
-
-  margin: 0 0 16px 0;
-  color: var(--oie-badge-text);
-  font-size: 13px;
-  line-height: 1.5;
+.oie-version-pill-host {
+  position: relative !important;
+  display: inline-block !important;
 }
-.oie-version-badge-name {
-  font-weight: 600;
-  margin-right: 6px;
-}
-.oie-version-badge-version {
+.oie-version-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
   font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--oie-badge-version-bg);
-  color: var(--oie-badge-primary);
-  font-weight: 700;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #3370ff;
+  color: #fff;
+  margin-left: 10px;
+  vertical-align: middle;
   user-select: none;
   -webkit-user-select: none;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(51,112,255,0.25);
 }
-.oie-version-badge-desc {
-  font-size: 12px;
-  color: var(--oie-badge-text-2);
-  margin-top: 2px;
-}
-/* Orca 暗色主题 — 通过 body 属性检测，不依赖 prefers-color-scheme */
-body[data-theme="dark"] .oie-version-badge,
-body.dark .oie-version-badge,
-body.theme-dark .oie-version-badge {
-  --oie-badge-primary: #7aaaff;
-  --oie-badge-text: #e8e8e8;
-  --oie-badge-text-2: #9ca3af;
-  --oie-badge-version-bg: rgba(74,140,255,0.18);
+body[data-theme="dark"] .oie-version-pill,
+body.dark .oie-version-pill,
+body.theme-dark .oie-version-pill {
+  background: #5b8ff9;
+  box-shadow: 0 1px 3px rgba(91,143,249,0.25);
 }
 @media (prefers-color-scheme: dark) {
-  .oie-version-badge {
-    --oie-badge-primary: #7aaaff;
-    --oie-badge-text: #e8e8e8;
-    --oie-badge-text-2: #9ca3af;
-    --oie-badge-version-bg: rgba(74,140,255,0.18);
-  }
+  .oie-version-pill { background: #5b8ff9; }
 }
 `;
-let versionBadgeInjected = false;
 let versionBadgeObserver = null;
-function injectVersionBadge(pluginName2) {
-  if (typeof document === "undefined") return;
-  if (versionBadgeInjected) {
-    const existing = document.querySelector(".oie-version-badge");
-    if (existing) return;
-    versionBadgeInjected = false;
+const OIE_VERSION_PATCHED = "data-oie-version-patched";
+function isInsideSidebar(el2) {
+  if (!el2) return false;
+  let depth = 0;
+  let node = el2;
+  while (node && depth < 6) {
+    const cls = (node.className || "").toString().toLowerCase();
+    if (/sidebar|side-bar|plugin-list|nav-panel|left-panel|nav-list/.test(cls)) return true;
+    node = node.parentElement;
+    depth++;
   }
+  return false;
+}
+function patchPluginNameWithVersion(pluginName2) {
+  if (typeof document === "undefined") return;
+  if (document.querySelector(`[${OIE_VERSION_PATCHED}]`)) return;
   if (!document.getElementById("oie-version-badge-style")) {
     const style = document.createElement("style");
     style.id = "oie-version-badge-style";
@@ -2428,83 +2420,84 @@ function injectVersionBadge(pluginName2) {
     style.textContent = VERSION_BADGE_STYLE;
     document.head.appendChild(style);
   }
-  const findPanel = () => {
-    var _a;
-    const settingsLabels = ["调试开关", "默认导出样式"];
-    const existing = document.querySelector(".oie-version-badge");
-    if (existing) {
-      versionBadgeInjected = true;
-      return null;
-    }
-    let bestCandidate = null;
-    let bestArea = Infinity;
-    const allEls = document.querySelectorAll("div, section, form");
-    for (const el2 of allEls) {
-      const text = el2.textContent || "";
-      if (!settingsLabels.every((label) => text.includes(label))) continue;
-      const rect = (_a = el2.getBoundingClientRect) == null ? void 0 : _a.call(el2);
-      if (!rect || rect.width < 200 || rect.height < 80) continue;
-      const area = rect.width * rect.height;
-      if (area < bestArea) {
-        bestArea = area;
-        bestCandidate = el2;
-      }
-    }
-    return bestCandidate;
-  };
-  const tryInject = () => {
-    var _a;
+  const tryPatch = () => {
+    var _a, _b, _c, _d;
     try {
-      const panel = findPanel();
-      if (!panel) {
-        debugLog(pluginName2, "version badge: panel not found yet");
-        return false;
-      }
-      if (panel.querySelector(".oie-version-badge")) {
-        versionBadgeInjected = true;
-        return true;
-      }
-      const headings = panel.querySelectorAll("h1, h2, h3, h4, h5, h6");
-      for (const h of headings) {
-        const text = ((_a = h.textContent) == null ? void 0 : _a.trim()) || "";
-        if (text === pluginName2 || text === "orca-import-export") {
-          h.style.display = "none";
+      let target = null;
+      const exactSelectors = [
+        `.plugin-property-name[data-plugin-name="${pluginName2}"]`,
+        `.plugin-detail-name[data-plugin-name="${pluginName2}"]`,
+        `[data-plugin-name="${pluginName2}"]`,
+        `[data-plugin="${pluginName2}"]`,
+        `.plugin-name[data-id="${pluginName2}"]`,
+        `.settings-plugin-name`
+      ];
+      for (const sel of exactSelectors) {
+        const el2 = document.querySelector(sel);
+        if (el2 && ((_a = el2.textContent) == null ? void 0 : _a.includes(pluginName2))) {
+          target = el2;
+          break;
         }
       }
-      const badge = document.createElement("div");
-      badge.className = "oie-version-badge";
-      badge.innerHTML = `
-        <div>
-          <span class="oie-version-badge-name">orca-import-export</span>
-          <span class="oie-version-badge-version">v${PLUGIN_VERSION}</span>
-        </div>
-        <div class="oie-version-badge-desc">让笔记迁移更简单</div>
-      `;
-      panel.insertBefore(badge, panel.firstChild);
-      versionBadgeInjected = true;
-      console.log("[OIE] version badge injected");
+      if (!target) {
+        const headingSelectors = "h1, h2, h3, h4, .title, .page-title, .plugin-title, .settings-title, .orca-plugin-title, .setting-header-title";
+        const headings = document.querySelectorAll(headingSelectors);
+        for (const h of headings) {
+          const text = ((_b = h.textContent) == null ? void 0 : _b.trim()) || "";
+          if (text === pluginName2) {
+            target = h;
+            break;
+          }
+        }
+      }
+      if (!target) {
+        const textEls = document.querySelectorAll("div, span, p, section, article, header");
+        let best = null;
+        let bestW = 0;
+        for (const el2 of textEls) {
+          const text = ((_c = el2.textContent) == null ? void 0 : _c.trim()) || "";
+          if (text !== pluginName2) continue;
+          const rect = (_d = el2.getBoundingClientRect) == null ? void 0 : _d.call(el2);
+          if (!rect || rect.width < 240) continue;
+          if (isInsideSidebar(el2)) continue;
+          if (rect.width > bestW) {
+            bestW = rect.width;
+            best = el2;
+          }
+        }
+        target = best;
+      }
+      if (!target || isInsideSidebar(target)) {
+        debugLog(pluginName2, "version pill: target not found or inside sidebar");
+        return false;
+      }
+      if (document.querySelector(`[${OIE_VERSION_PATCHED}]`)) return true;
+      target.setAttribute(OIE_VERSION_PATCHED, "true");
+      target.classList.add("oie-version-pill-host");
+      const pill = document.createElement("span");
+      pill.className = "oie-version-pill";
+      pill.textContent = `v${PLUGIN_VERSION}`;
+      target.appendChild(pill);
+      console.log("[OIE] version pill patched");
       return true;
     } catch (e) {
       return false;
     }
   };
-  if (tryInject()) return;
+  if (tryPatch()) return;
   if (versionBadgeObserver) {
     versionBadgeObserver.disconnect();
   }
   versionBadgeObserver = new MutationObserver(() => {
-    if (tryInject()) {
+    if (tryPatch()) {
       versionBadgeObserver == null ? void 0 : versionBadgeObserver.disconnect();
       versionBadgeObserver = null;
     }
   });
   versionBadgeObserver.observe(document.body, { childList: true, subtree: true });
   setTimeout(() => {
-    if (!versionBadgeInjected) {
-      console.warn(
-        "[OIE] version badge: not injected after 5s. Available settings panels:",
-        Array.from(document.querySelectorAll('.orca-plugin-settings, .orca-settings-panel, [class*="plugin-settings"], [class*="settings-content"]')).map((el2) => ({ className: el2.className, text: (el2.textContent || "").slice(0, 80) }))
-      );
+    if (!document.querySelector(`[${OIE_VERSION_PATCHED}]`)) {
+      console.warn("[OIE] version pill: not patched after 5s");
     }
   }, 5e3);
   setTimeout(() => {
@@ -2520,9 +2513,15 @@ function removeVersionBadge() {
     versionBadgeObserver.disconnect();
     versionBadgeObserver = null;
   }
-  versionBadgeInjected = false;
+  document.querySelectorAll(`[${OIE_VERSION_PATCHED}]`).forEach((el2) => {
+    el2.removeAttribute(OIE_VERSION_PATCHED);
+    el2.classList.remove("oie-version-pill-host");
+    const pill = el2.querySelector(".oie-version-pill");
+    if (pill) pill.remove();
+  });
+  document.querySelectorAll(".oie-version-pill").forEach((el2) => el2.remove());
+  document.querySelectorAll(".oie-version-pill-host").forEach((el2) => el2.classList.remove("oie-version-pill-host"));
   (_a = document.getElementById("oie-version-badge-style")) == null ? void 0 : _a.remove();
-  document.querySelectorAll(".oie-version-badge").forEach((el2) => el2.remove());
 }
 function debugLog(pluginName2, ...args) {
   const settings = getSettings();

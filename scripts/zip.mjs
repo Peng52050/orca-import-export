@@ -26,6 +26,7 @@ const VERSION = pkg.version || '0.0.0';
 const REQUIRED = [
   { src: join(ROOT, 'dist'), type: 'dir',  name: 'dist/' },
   { src: join(ROOT, 'icon.png'), type: 'file', name: 'icon.png' },
+  { src: join(ROOT, 'icon.svg'), type: 'file', name: 'icon.svg' },
   { src: join(ROOT, 'package.json'), type: 'file', name: 'package.json' },
   { src: join(ROOT, 'LICENSE'), type: 'file', name: 'LICENSE' },
   { src: join(ROOT, 'README.md'), type: 'file', name: 'README.md' },

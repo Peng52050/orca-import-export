@@ -1,6 +1,6 @@
 {
   "name": "orca-import-export",
-  "version": "2.4.6",
+  "version": "2.4.7",
   "description": "让笔记迁移更简单",
   "type": "module",
   "scripts": {
