@@ -2170,7 +2170,7 @@ async function setAllBlocksFolded(collapse) {
     return 0;
   }
 }
-const PLUGIN_VERSION = "2.4.7";
+const PLUGIN_VERSION = "2.4.8";
 const DEFAULT_SETTINGS = {
   debug: false,
   defaultExportStyle: "orca",

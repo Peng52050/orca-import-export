@@ -30,6 +30,7 @@ const REQUIRED = [
   { src: join(ROOT, 'package.json'), type: 'file', name: 'package.json' },
   { src: join(ROOT, 'LICENSE'), type: 'file', name: 'LICENSE' },
   { src: join(ROOT, 'README.md'), type: 'file', name: 'README.md' },
+  { src: join(ROOT, 'CHANGELOG.md'), type: 'file', name: 'CHANGELOG.md' },
 ];
 
 // 临时目录

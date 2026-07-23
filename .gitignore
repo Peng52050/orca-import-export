@@ -1,0 +1,8 @@
+node_modules/
+.tmp_zip_build/
+*.zip
+test-*.mjs
+test-*.json
+test-*.txt
+test-*.md
+icon_original_*.png
